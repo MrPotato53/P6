@@ -11,6 +11,7 @@
 
 
 void write_superblock(int fd, struct wfs_sb *sb) {
+
     if (lseek(fd, 0, SEEK_SET) < 0) {
         perror("lseek");
         exit(-1);
@@ -109,14 +110,14 @@ int main (int argc, char *argv[]) {
                 raid_mode = atoi(optarg);
                 if((raid_mode != 0) && (raid_mode != 1) && (raid_mode != 5) && (raid_mode != 10)) {
                     perror("Invalid raid mode, must be 0, 1, 5, or 10.\n");
-                    exit(-1);
+                    exit(1);
                 }
                 break;
             case('d'):
                 disk_files = realloc(disk_files, sizeof(char *) * (disks_count + 1));
                 if(!disk_files) {
                     perror("Realloc failed\n");
-                    exit(-1);
+                    exit(1);
                 }
                 disk_files[disks_count++] = strdup(optarg);
                 break;
@@ -128,7 +129,7 @@ int main (int argc, char *argv[]) {
                 break;
             default:
                 perror("Usage: mkfs -d [raid_mode] -d [disk1] -d [disk2] -i [inode count] -b [block count]\n");
-                exit(-1);
+                exit(1);
         }
     }
 
@@ -136,7 +137,7 @@ int main (int argc, char *argv[]) {
     // Check that arguments are parsed correctly
     if(raid_mode == -1 || disks_count == 0 || data_block_count == 0 || inode_count == 0) {
         perror("Incorrect initializiation arguments\n");
-        exit(-1);
+        exit(1);
     }
 
     // Calculate offsets / sizes
@@ -161,7 +162,7 @@ int main (int argc, char *argv[]) {
 
         if ((fd = open(disk_files[i], O_CREAT | O_RDWR)) <= 0) {
             perror("Failed to open disk file\n");
-            exit(-1);
+            exit(1);
         }
 
         if (stat(disk_files[i], &disk_st) != 0)
