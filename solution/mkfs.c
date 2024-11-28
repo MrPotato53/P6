@@ -134,6 +134,7 @@ int main (int argc, char *argv[]) {
     }
 
     data_block_count = (data_block_count + 31) / 32 * 32; // Round data blocks up by 32
+    inode_count = (inode_count + 31) / 32 * 32; // Round inodes up by 32
     // Check that arguments are parsed correctly
     if(raid_mode == -1 || disks_count == 0 || data_block_count == 0 || inode_count == 0) {
         perror("Incorrect initializiation arguments\n");
