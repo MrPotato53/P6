@@ -114,12 +114,20 @@ int main (int argc, char *argv[]) {
                 }
                 break;
             case('d'):
+                if(disks_count >= MAX_DISK) {
+                    perror("Too Many Disks\n");
+                    exit(1);
+                }
                 disk_files = realloc(disk_files, sizeof(char *) * (disks_count + 1));
                 if(!disk_files) {
                     perror("Realloc failed\n");
                     exit(1);
                 }
                 disk_files[disks_count++] = strdup(optarg);
+                if(strlen(disk_files[disks_count]) > MAX_NAME) {
+                    perror("Disk Name Too Long\n");
+                    exit(1);
+                }
                 break;
             case('i'):
                 inode_count = atoi(optarg);
