@@ -18,7 +18,11 @@ int main(int argc, char *argv[]) {
 
     while ((opt = getopt(argc, argv, "r:d:i:b:")) != -1) switch (opt) {
         case 'r':
-            raid_mode = atoi(optarg);
+            if (strcmp(optarg, "0") == 0) raid_mode = 0;
+            else if (strcmp(optarg, "1") == 0) raid_mode = 1;
+            else if (strcmp(optarg, "1v") == 0) raid_mode = 2;
+
+            else exit(1);          
             break;
         case 'd':
             if(disk_cnt >= MAX_DISK) exit(1);
@@ -54,6 +58,7 @@ int main(int argc, char *argv[]) {
     off_t total_size = myround(sb.d_blocks_ptr + sb.num_data_blocks * BLOCK_SIZE, BLOCK_SIZE);
 
     for (int i = 0; i < disk_cnt; i++) {
+        strcpy(sb.disks[i], disks[i]);
 
         int fd;
         if ((fd = open(disks[i], O_CREAT | O_RDWR)) <= 0) exit(1);
