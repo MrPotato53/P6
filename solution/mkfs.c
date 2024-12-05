@@ -57,9 +57,9 @@ int main(int argc, char *argv[]) {
 
     off_t total_size = myround(sb.d_blocks_ptr + sb.num_data_blocks * BLOCK_SIZE, BLOCK_SIZE);
 
-    for (int i = 0; i < disk_cnt; i++) {
-        strcpy(sb.disks[i], disks[i]);
+    for (int i = 0; i < disk_cnt; i++) strcpy(sb.disks[i], disks[i]);
 
+    for (int i = 0; i < disk_cnt; i++) {
         int fd;
         if ((fd = open(disks[i], O_CREAT | O_RDWR)) <= 0) exit(1);
 
