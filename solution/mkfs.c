@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
             
             disks[disk_cnt++] = strdup(optarg);
 
-            if(strlen(disks[disk_cnt]) > MAX_NAME) exit(1);
+            if(strlen(disks[disk_cnt - 1]) > MAX_NAME) exit(1);
             break;
         case 'i':
             sb.num_inodes = myround(atoi(optarg), 32);
