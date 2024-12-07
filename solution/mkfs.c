@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
+#include <stdint.h>
 #include "wfs.h"
 
 int myround(int n, int r) {
@@ -74,8 +75,8 @@ int main(int argc, char *argv[]) {
 
         if (lseek(fd, 0, SEEK_SET) < 0 || write(fd, &sb, sizeof(struct wfs_sb)) < 0) exit(-1);
  
-        char *zeroed_i_bitmap = calloc(1, inode_bitmap_size);
-        char *zeroed_d_bitmap = calloc(1, data_block_bitmap_size);
+        uint8_t *zeroed_i_bitmap = calloc(1, inode_bitmap_size);
+        uint8_t *zeroed_d_bitmap = calloc(1, data_block_bitmap_size);
         if (!zeroed_i_bitmap || !zeroed_d_bitmap) exit(1);
 
         zeroed_i_bitmap[0] = 1;

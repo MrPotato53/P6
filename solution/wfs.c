@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/mman.h>
 #include "wfs.h"
 
 int disk_count;
@@ -14,67 +15,75 @@ int raid_mode = -1;
 
 
 void free_block(off_t blk, int disk_count) {
-  struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
-  
-  memset((char*)regions[disk_count] + blk, 0, BLOCK_SIZE);
+	// Retrieve superblock for disk
+	struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
 
-  off_t blk_index = (blk - sb->d_blocks_ptr) / BLOCK_SIZE;
-  uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + sb->d_bitmap_ptr);
+	memset((char*)regions[disk_count] + blk, 0, BLOCK_SIZE);
 
-  bitmap[blk_index / 32] ^= (1 << blk_index % 32);
+	off_t blk_index = (blk - sb->d_blocks_ptr) / BLOCK_SIZE;
+	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + sb->d_bitmap_ptr);
+
+	bitmap[blk_index / 32] ^= (1 << blk_index % 32);
 }
 
 void free_inode(struct wfs_inode* inode, int disk_count) {
-  struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
-  
-  memset((char*)inode, 0, BLOCK_SIZE);
+	struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
 
-  off_t blk_index = ((char*)inode - regions[disk_count] + sb->i_blocks_ptr) / BLOCK_SIZE;
-  uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + sb->i_blocks_ptr);
+	memset((char*)inode, 0, BLOCK_SIZE);
 
-  bitmap[blk_index / 32] ^= (1 << blk_index % 32);
+	off_t blk_index = ((char*)inode - (char *)regions[disk_count] + sb->i_blocks_ptr) / BLOCK_SIZE;
+	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + sb->i_blocks_ptr);
+
+	bitmap[blk_index / 32] ^= (1 << blk_index % 32);
 }
 
 struct wfs_inode* get_inode(int n, int disk_count) {
-  struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
+	struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
 
-  uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + sb->i_blocks_ptr);
+	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + sb->i_blocks_ptr);
 
-  if (bitmap[n / 32] & (1 << n % 32))
-    return (struct wfs_inode*)(((char*)regions[disk_count] + sb->i_blocks_ptr) + n * BLOCK_SIZE);
+	if (bitmap[n / 32] & (1 << n % 32))
+	return (struct wfs_inode*)(((char*)regions[disk_count] + sb->i_blocks_ptr) + n * BLOCK_SIZE);
 
-  return NULL;
+	return NULL;
 }
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
-    
+    return 0;
 }
 
 static int wfs_mknod(const char* path, mode_t mode, dev_t rdev) {
+    return 0;
 
 }
 
 static int wfs_mkdir(const char* path, mode_t mode) {
+    return 0;
 
 }
 
 static int wfs_unlink(const char* path) {
+    return 0;
 
 }
 
 static int wfs_rmdir(const char* path) {
+    return 0;
 
 }
 
 static int wfs_read(const char* path, char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
+    return 0;
 
 }
 
 static int wfs_write(const char* path, char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
+    return 0;
 
 }
 
 static int wfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info* fi) {
+    return 0;
 
 }
 
@@ -93,7 +102,6 @@ static struct fuse_operations ops = {
 
 int main(int argc, char *argv[]) {
 	int fd[MAX_DISK];
-	int mount_indicies[MAX_DISK];
 	void *tmp_region[MAX_DISK];
 	struct stat stats;
 	int unique_run_id = -1;
@@ -145,6 +153,8 @@ int main(int argc, char *argv[]) {
 	argv[disk_count] = argv[0];
 	argv += disk_count;
 
+	raid_mode = ((struct wfs_sb *)regions[0])->raid_mode;
+
 	int fuse_out = fuse_main(argc, argv, &ops, NULL);
 
 	// Unmap all regions
@@ -155,9 +165,9 @@ int main(int argc, char *argv[]) {
 		}
 
 		// using tmp_regions because it is in same order as fd
-		unmap(tmp_regions[i], stats.st_size);
+		munmap(tmp_region[i], stats.st_size);
 		close(fd[i]);
 	}
 
-    return fuse_out
+    return fuse_out;
 }
