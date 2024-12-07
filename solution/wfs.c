@@ -14,44 +14,135 @@
 int disk_count;
 void *regions[MAX_DISK];
 int raid_mode = -1;
+struct wfs_sb *superblock;
 
 
 void free_block(off_t blk, int disk_count) {
-	// Retrieve superblock for disk
-	struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
-
 	memset((char*)regions[disk_count] + blk, 0, BLOCK_SIZE);
 
-	off_t blk_index = (blk - sb->d_blocks_ptr) / BLOCK_SIZE;
-	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + sb->d_bitmap_ptr);
+	off_t blk_index = (blk - superblock->d_blocks_ptr) / BLOCK_SIZE;
+	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->d_bitmap_ptr);
 
 	bitmap[blk_index / 32] ^= (1 << blk_index % 32);
 }
 
 void free_inode(struct wfs_inode* inode, int disk_count) {
-	struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
-
 	memset((char*)inode, 0, BLOCK_SIZE);
 
-	off_t blk_index = ((char*)inode - (char *)regions[disk_count] + sb->i_blocks_ptr) / BLOCK_SIZE;
-	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + sb->i_blocks_ptr);
+	off_t blk_index = ((char*)inode - (char *)regions[disk_count] + superblock->i_blocks_ptr) / BLOCK_SIZE;
+	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->i_blocks_ptr);
 
 	bitmap[blk_index / 32] ^= (1 << blk_index % 32);
 }
 
 struct wfs_inode* get_inode(int n, int disk_count) {
-	struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
-
-	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + sb->i_blocks_ptr);
+	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->i_blocks_ptr);
 
 	if (bitmap[n / 32] & (1 << n % 32))
-	return (struct wfs_inode*)(((char*)regions[disk_count] + sb->i_blocks_ptr) + n * BLOCK_SIZE);
+	return (struct wfs_inode*)(((char*)regions[disk_count] + superblock->i_blocks_ptr) + n * BLOCK_SIZE);
 
 	return NULL;
 }
 
+int block_exists(struct wfs_sb *sb, off_t block_index) {
+	int8_t *b_bitmap = sb + superblock->d_bitmap_ptr;
+	return (int)(b_bitmap + (block_index / 8)) & 0x1 << block_index % 8;
+}
+
+void *get_block(off_t block_index) {
+	struct wfs_dentry *dir_block;
+	if(raid_mode == 0) {
+		// Raid 0 Case
+		int disk = block_index % disk_count;
+		int index = block_index / disk_count;
+
+		if(!block_exists((struct wfs_sb*)regions[disk], index)) {
+			perror("Block was not allocated\n");
+			return -ENOENT;
+		}
+		dir_block = (struct wfs_dentry *)((char *)regions[disk] + superblock->d_blocks_ptr + (index * BLOCK_SIZE));
+	} else if(raid_mode == 1) {
+		// Raid 1 Case
+
+		// All disks are identical so just take from disk 0
+		if(!block_exists((struct wfs_sb*)regions[0], block_index)) {
+			perror("Block was not allocated\n");
+			return -ENOENT;
+		}
+		dir_block = (struct wfs_dentry *)((char *)regions[0] + superblock->d_blocks_ptr + (block_index * BLOCK_SIZE));
+	} else if(raid_mode == 2) {
+		// Raid 1v Case
+		struct wfs_dentry *unique_blocks[disk_count];
+		memset(unique_blocks, 0, sizeof(unique_blocks));
+		int block_counts[disk_count];
+		memset(block_counts, 0, sizeof(block_counts));
+		int max_count_index = 0;
+		struct wfs_dentry *curr_block;
+
+		// Walk through all disks
+		// take block at index in every disk, compare them against other disks
+		// Find block with the most occurrences, return that with lowest index
+		for(int i = 0; i < disk_count; i++) {
+			curr_block = (struct wfs_dentry *)((char *)regions[i] + superblock->d_blocks_ptr + (block_index * BLOCK_SIZE));
+			
+			// Skip nonexistent blocks
+			if(!block_exists((struct wfs_sb*)regions[i], block_index)) continue;
+			
+			for(int j = 0; j < sizeof(unique_blocks); j++) {
+				if(unique_blocks[j] == 0) {
+					// Never before seen block
+					unique_blocks[i] = curr_block;
+					block_counts[j]++;
+				} else if(memcmp(curr_block, unique_blocks[j], BLOCK_SIZE) == 0) {
+					// Seen before block
+					block_counts[j]++;
+				} else {
+					continue;
+				}
+
+				// Update the most frequently occurring block
+				if(block_counts[j] >= block_counts[max_count_index]) {
+					max_count_index = j > max_count_index ? max_count_index : j;
+				}
+				break;
+			}
+		}
+		if((dir_block = unique_blocks[max_count_index]) == 0) {
+			perror("Block was not allocated on any disk\n");
+			return -ENOENT;
+		}
+	} else {
+		perror("Invalid Raid Mode\n");
+		return -1;
+	}
+	return (void *)dir_block;
+}
+
+struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name) {
+	off_t *block_indicies = dir_inode->blocks;
+	struct wfs_dentry *curr_dentry;
+
+	// Search each data block
+	for(int i = 0; i < D_BLOCK; i++) {
+		if(block_indicies[i] == 0) continue;
+		if((curr_dentry = (struct wfs_dentry *) get_block(block_indicies[i])) <= 0) return curr_dentry;
+		// Search each dentry in data block
+		for(int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++) {
+			if(strcmp(curr_dentry[j].name, name) == 0) {
+				return &curr_dentry[j];
+			}
+		}
+	}
+	// No matching dentry found
+	return -ENOENT;
+}
+
 struct wfs_inode *get_inode_from_path(char *path) {
-	
+	if(strcmp(path, "/") == 0) {
+		return get_inode(0, 0);
+	}
+
+
 }
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
@@ -160,7 +251,8 @@ int main(int argc, char *argv[]) {
 	argv[disk_count] = argv[0];
 	argv += disk_count;
 
-	raid_mode = ((struct wfs_sb *)regions[0])->raid_mode;
+	superblock = ((struct wfs_sb *)regions[0]);
+	raid_mode = superblock->raid_mode;
 
 	int fuse_out = fuse_main(argc, argv, &ops, NULL);
 
