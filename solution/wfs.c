@@ -1,3 +1,5 @@
+#define FUSE_USE_VERSION 30
+
 #include <fuse.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,7 +50,12 @@ struct wfs_inode* get_inode(int n, int disk_count) {
 	return NULL;
 }
 
+struct wfs_inode *get_inode_from_path(char *path) {
+	
+}
+
 static int wfs_getattr(const char *path, struct stat *stbuf) {
+
     return 0;
 }
 
@@ -77,7 +84,7 @@ static int wfs_read(const char* path, char *buf, size_t size, off_t offset, stru
 
 }
 
-static int wfs_write(const char* path, char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
+static int wfs_write(const char* path, const char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
     return 0;
 
 }
