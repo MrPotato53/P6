@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include "wfs.h"
 
 int disk_count;
@@ -138,15 +139,54 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name) {
 }
 
 struct wfs_inode *get_inode_from_path(char *path) {
+
+	struct wfs_inode *curr_inode = get_inode(0, 0);
+
 	if(strcmp(path, "/") == 0) {
-		return get_inode(0, 0);
+		return curr_inode;
 	}
 
+	char *path_copy = strdup(path);
+	char *rem_path = path_copy;
+	char *tok = strtok(rem_path, "/");
+	struct wfs_dentry *dentry;
+	while(tok) {
+		// Check if curr inode is directory
+		if(!S_IFDIR(curr_inode->mode)) {
+			free(rem_path);
+			return -ENOENT;
+		}
 
+		// Find dentry in current inode and corresponding next inode
+		if((dentry = find_dentry(curr_inode, tok)) <= 0) {
+			free(rem_path);
+			return dentry;
+		}
+
+		if((curr_inode = get_inode(dentry->num, 0)) <= 0) {
+			free(rem_path);
+			return curr_inode;
+		}
+
+		tok = strtok(NULL, "/");
+	}
+
+	free(rem_path);
+	return curr_inode;
 }
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
+	struct wfs_inode *inode;
+	if((inode = get_inode_from_path(path)) <= 0) {
+		return inode;
+	}
 
+	stbuf->st_uid = inode->uid;
+	stbuf->st_gid = inode->gid;
+	stbuf->st_atime = inode->atim;
+	stbuf->st_mtime = inode->mtim;
+	stbuf->st_mode = inode->mode;
+	stbuf->st_size = inode->size;
     return 0;
 }
 
