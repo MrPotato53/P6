@@ -46,11 +46,10 @@ struct wfs_inode* get_inode(int n, int disk_count) {
 }
 
 off_t allocate_block(int disk_count) {
-    struct wfs_sb* sb = (struct wfs_sb*)region[disk_count];
 	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->d_bitmap_ptr);
 
 	off_t blk = -1;
-	for (uint32_t i = 0; i < sb->num_data_blocks / 32; i++) {
+	for (uint32_t i = 0; i < superblock->num_data_blocks / 32; i++) {
         if (bitmap[i] == 0xFFFFFFFF)
             continue;
 
@@ -63,11 +62,11 @@ off_t allocate_block(int disk_count) {
 	
     if (blk < 0) return -ENOSPC;
 
-    return sb->d_blocks_ptr + BLOCK_SIZE * blk;
+    return superblock->d_blocks_ptr + BLOCK_SIZE * blk;
 }
 
 struct wfs_inode* allocate_inode(int disk) {
-	struct wfs_sb* sb = (struct wfs_sb*)region[disk_count];
+	struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
 	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->i_bitmap_ptr);
 
 	off_t blk = -1;
@@ -255,8 +254,40 @@ static int wfs_rmdir(const char* path) {
 }
 
 static int wfs_read(const char* path, char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
-    return 0;
+    (void)fi;
+	struct wfs_inode *inode;
+	if((inode = get_inode_from_path(path)) <= 0) {
+		return inode;
+	}
 
+	size_t curr_position = offset;
+	size_t read = 0;
+	size_t to_read;
+
+	int curr_block_index;
+	char *curr_block;
+	while((read < size) && (curr_position < inode->size)) {
+		// Retrieve block to read from
+		// get_block handles all raid on a per block basis
+		curr_block_index = curr_position / BLOCK_SIZE;
+		if((curr_block = get_block(curr_block_index)) <= 0) return curr_block;
+
+		// Calcuate size to read
+		to_read = BLOCK_SIZE - (curr_position % BLOCK_SIZE);
+		if(inode->size - curr_position < to_read) to_read = inode->size - curr_position;
+
+		// Perform Read Operation
+		if(memcpy(buf + read, curr_block + (curr_position % BLOCK_SIZE), to_read) <= 0) {
+			perror("memcpy failed\n");
+			return -1;
+		}
+		
+		// Update indexing variables
+		read += to_read;
+		curr_position += to_read;
+	}
+
+	return read;
 }
 
 static int wfs_write(const char* path, const char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
