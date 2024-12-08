@@ -45,8 +45,8 @@ struct wfs_inode* get_inode(int n, int disk) {
 	return NULL;
 }
 
-off_t allocate_block(int disk) {
-	uint8_t* bitmap = (uint8_t*)((char*)regions[disk] + superblock->d_bitmap_ptr);
+off_t allocate_block() {
+	uint8_t* bitmap = (uint8_t*)((char*)regions[0] + superblock->d_bitmap_ptr);
 
 	off_t blk = -1;
 	for (uint8_t i = 0; i < superblock->num_data_blocks / 8; i++) {
@@ -181,7 +181,7 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name) {
 	struct wfs_dentry *curr_dentry;
 
 	// Search each data block
-	for(int i = 0; i < D_BLOCK; i++) {
+	for(int i = 0; i <= D_BLOCK; i++) {
 		if(block_indicies[i] == 0) continue;
 		if((curr_dentry = (struct wfs_dentry *) get_block(block_indicies[i], -1)) <= 0) return curr_dentry;
 		// Search each dentry in data block
@@ -230,6 +230,33 @@ struct wfs_inode *get_inode_from_path(char *path) {
 
 	free(rem_path);
 	return curr_inode;
+}
+
+int update_all_inodes(struct wfs_inode *inode) {
+	struct wfs_inode *toreplace;
+	for(int i = 0; i < disk_count; i++) {
+		if((toreplace = get_inode(inode->num, i)) <= 0) return toreplace;
+		if(memcpy(toreplace, inode, BLOCK_SIZE) <= 0) {
+			perror("memcpy failed\n");
+			return -1;
+		}
+	}
+	return 0;
+}
+
+off_t get_datablock_index_from_inode_block_index(int i, off_t *blocks) {
+	if(i >= 0 || i <= D_BLOCK) {
+		if(blocks[i] == 0) return -1;
+		return blocks[i];
+	} else if (i <= (BLOCK_SIZE / sizeof(off_t)) + D_BLOCK){
+		off_t *block;
+		if(blocks[IND_BLOCK] == 0) return -1;
+		if((block = get_block(blocks[IND_BLOCK], -1)) <= 0) return block;
+		if(block[i - (D_BLOCK + 1)] == 0) return -1;
+		return block[i - (D_BLOCK + 1)];
+	}
+	perror("Block index out of range\n");
+	return -1;
 }
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
@@ -283,7 +310,11 @@ static int wfs_read(const char* path, char *buf, size_t size, off_t offset, stru
 	while((read < size) && (curr_position < inode->size)) {
 		// Retrieve block to read from
 		// get_block handles all raid 1v block selection on a per block basis if disk argument is -1
-		curr_block_index = curr_position / BLOCK_SIZE;
+		curr_block_index = get_datablock_index_from_inode_block_index(curr_position / BLOCK_SIZE, inode->blocks);
+		if(curr_block_index <= 0) {
+			perror("Inode does not contain this block\n");
+			return -ENOENT;
+		}
 		if((curr_block = get_block(curr_block_index, -1)) <= 0) return curr_block;
 
 		// Calcuate size to read
@@ -312,10 +343,44 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 	}
 
 	size_t written = 0;
-	size_t curr_position;
+	size_t to_write;
+	size_t curr_position = offset;
+
+	int curr_block_index;
+	char *curr_block;
+	while(written < size) {
+		// Find index in data block array of inode
+		curr_block_index = get_datablock_index_from_inode_block_index(curr_position / BLOCK_SIZE, inode->blocks);
+
+		// Make sure there is an existing entry, alloc if not
+		if(curr_block_index == -ENOENT) {
+			if((curr_block_index = allocate_block()) <= 0) return curr_block_index;
+			inode->blocks[curr_position / BLOCK_SIZE] = curr_block_index;
+			inode->size += BLOCK_SIZE;
+			if(update_all_inodes(inode) < 0) return -1;
+		} else if(curr_block_index <= 0) {
+			return -ENOENT;
+		}
+
+		// Retrieve corresponding data block in memory
+		if((curr_block = get_block(curr_block_index, -1)) <= 0) return curr_block;
+
+		// Calculate size to write
+		to_write = BLOCK_SIZE - (curr_position % BLOCK_SIZE);
+		if(size - written < to_write) to_write = size - written;
+
+		// Perform write Operation
+		if(memcpy(curr_block + (curr_position % BLOCK_SIZE), buf + written, to_write) <= 0) {
+			perror("memcpy failed\n");
+			return -1;
+		}
+
+		// Update indexing variables
+		written += to_write;
+		curr_position += to_write;
+	}
 
     return 0;
-
 }
 
 static int wfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info* fi) {
