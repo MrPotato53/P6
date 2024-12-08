@@ -45,6 +45,50 @@ struct wfs_inode* get_inode(int n, int disk_count) {
 	return NULL;
 }
 
+off_t allocate_block(int disk_count) {
+    struct wfs_sb* sb = (struct wfs_sb*)region[disk_count];
+	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->d_bitmap_ptr);
+
+	off_t blk = -1;
+	for (uint32_t i = 0; i < sb->num_data_blocks / 32; i++) {
+        if (bitmap[i] == 0xFFFFFFFF)
+            continue;
+
+        for (uint32_t k = 0; k < 32; k++)
+            if (!((bitmap[i] >> k) & 1)) {
+                bitmap[i] = bitmap[i] | (1 << k);
+                blk =  32 * i + k;
+            }
+    }
+	
+    if (blk < 0) return -ENOSPC;
+
+    return sb->d_blocks_ptr + BLOCK_SIZE * blk;
+}
+
+struct wfs_inode* allocate_inode(int disk) {
+	struct wfs_sb* sb = (struct wfs_sb*)region[disk_count];
+	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->i_bitmap_ptr);
+
+	off_t blk = -1;
+	for (uint32_t i = 0; i < sb->num_inodes / 32; i++) {
+        if (bitmap[i] == 0xFFFFFFFF)
+            continue;
+
+        for (uint32_t k = 0; k < 32; k++)
+            if (!((bitmap[i] >> k) & 1)) {
+                bitmap[i] = bitmap[i] | (1 << k);
+                blk =  32 * i + k;
+            }
+    }
+
+    if (blk < 0) return -ENOSPC;
+
+    struct wfs_inode* inode = (struct wfs_inode*)((char*)regions[disk_count] + superblock->i_bitmap_ptr + BLOCK_SIZE * blk);
+    inode->num = blk;
+    return inode;
+}
+
 int block_exists(struct wfs_sb *sb, off_t block_index) {
 	int8_t *b_bitmap = sb + superblock->d_bitmap_ptr;
 	return (int)(b_bitmap + (block_index / 8)) & 0x1 << block_index % 8;
