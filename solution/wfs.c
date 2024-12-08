@@ -55,13 +55,9 @@ off_t allocate_block(int disk) {
 
         for (uint8_t k = 0; k < 8; k++) {
             if (!((bitmap[i] >> k) & 1)) {
-				if(raid_mode >= 1) {
-					// allocate inodes on all disks if raid is 1 or 1v
-					for(int j = 0; j < disk_count; j++) {
-						bitmap = (uint8_t*)((char*)regions[j] + superblock->d_bitmap_ptr);
-						bitmap[i] = bitmap[i] | (1 << k);
-					}
-				} else {
+				// allocate inodes on all disks if raid is 1 or 1v
+				for(int j = 0; j < disk_count; j++) {
+					bitmap = (uint8_t*)((char*)regions[j] + superblock->d_bitmap_ptr);
 					bitmap[i] = bitmap[i] | (1 << k);
 				}
                 blk =  8 * i + k;
@@ -74,7 +70,7 @@ off_t allocate_block(int disk) {
     return superblock->d_blocks_ptr + BLOCK_SIZE * blk;
 }
 
-struct wfs_inode* allocate_inode() {
+off_t allocate_inode() {
 	uint8_t* bitmap = (uint8_t*)((char*)regions[0] + superblock->i_bitmap_ptr);
 
 	off_t blk = -1;
@@ -98,7 +94,7 @@ struct wfs_inode* allocate_inode() {
 
     struct wfs_inode* inode = (struct wfs_inode*)((char*)regions[disk_count] + superblock->i_bitmap_ptr + BLOCK_SIZE * blk);
     inode->num = blk;
-    return inode;
+    return blk;
 }
 
 int block_exists(struct wfs_sb *sb, off_t block_index) {
@@ -286,7 +282,7 @@ static int wfs_read(const char* path, char *buf, size_t size, off_t offset, stru
 	char *curr_block;
 	while((read < size) && (curr_position < inode->size)) {
 		// Retrieve block to read from
-		// get_block handles all raid on a per block basis
+		// get_block handles all raid 1v block selection on a per block basis if disk argument is -1
 		curr_block_index = curr_position / BLOCK_SIZE;
 		if((curr_block = get_block(curr_block_index, -1)) <= 0) return curr_block;
 
@@ -316,7 +312,7 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 	}
 
 	size_t written = 0;
-
+	size_t curr_position;
 
     return 0;
 
