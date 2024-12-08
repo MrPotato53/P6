@@ -18,46 +18,55 @@ int raid_mode = -1;
 struct wfs_sb *superblock;
 
 
-void free_block(off_t blk, int disk_count) {
-	memset((char*)regions[disk_count] + blk, 0, BLOCK_SIZE);
+void free_block(off_t blk, int disk) {
+	memset((char*)regions[disk] + blk, 0, BLOCK_SIZE);
 
 	off_t blk_index = (blk - superblock->d_blocks_ptr) / BLOCK_SIZE;
-	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->d_bitmap_ptr);
+	uint8_t* bitmap = (uint8_t*)((char*)regions[disk] + superblock->d_bitmap_ptr);
 
 	bitmap[blk_index / 8] ^= (1 << blk_index % 8);
 }
 
-void free_inode(struct wfs_inode* inode, int disk_count) {
+void free_inode(struct wfs_inode* inode, int disk) {
 	memset((char*)inode, 0, BLOCK_SIZE);
 
-	off_t blk_index = ((char*)inode - (char *)regions[disk_count] + superblock->i_blocks_ptr) / BLOCK_SIZE;
-	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->i_blocks_ptr);
+	off_t blk_index = ((char*)inode - (char *)regions[disk] + superblock->i_blocks_ptr) / BLOCK_SIZE;
+	uint8_t* bitmap = (uint8_t*)((char*)regions[disk] + superblock->i_blocks_ptr);
 
 	bitmap[blk_index / 8] ^= (1 << blk_index % 8);
 }
 
-struct wfs_inode* get_inode(int n, int disk_count) {
-	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->i_blocks_ptr);
+struct wfs_inode* get_inode(int n, int disk) {
+	uint8_t* bitmap = (uint8_t*)((char*)regions[disk] + superblock->i_blocks_ptr);
 
 	if (bitmap[n / 8] & (1 << n % 8))
-	return (struct wfs_inode*)(((char*)regions[disk_count] + superblock->i_blocks_ptr) + n * BLOCK_SIZE);
+	return (struct wfs_inode*)(((char*)regions[disk] + superblock->i_blocks_ptr) + n * BLOCK_SIZE);
 
 	return NULL;
 }
 
-off_t allocate_block(int disk_count) {
-	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->d_bitmap_ptr);
+off_t allocate_block(int disk) {
+	uint8_t* bitmap = (uint8_t*)((char*)regions[disk] + superblock->d_bitmap_ptr);
 
 	off_t blk = -1;
 	for (uint8_t i = 0; i < superblock->num_data_blocks / 8; i++) {
         if (bitmap[i] == 0xFF)
             continue;
 
-        for (uint8_t k = 0; k < 8; k++)
+        for (uint8_t k = 0; k < 8; k++) {
             if (!((bitmap[i] >> k) & 1)) {
-                bitmap[i] = bitmap[i] | (1 << k);
+				if(raid_mode >= 1) {
+					// allocate inodes on all disks if raid is 1 or 1v
+					for(int j = 0; j < disk_count; j++) {
+						bitmap = (uint8_t*)((char*)regions[j] + superblock->d_bitmap_ptr);
+						bitmap[i] = bitmap[i] | (1 << k);
+					}
+				} else {
+					bitmap[i] = bitmap[i] | (1 << k);
+				}
                 blk =  8 * i + k;
             }
+		}
     }
 	
     if (blk < 0) return -ENOSPC;
@@ -65,20 +74,24 @@ off_t allocate_block(int disk_count) {
     return superblock->d_blocks_ptr + BLOCK_SIZE * blk;
 }
 
-struct wfs_inode* allocate_inode(int disk) {
-	struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
-	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->i_bitmap_ptr);
+struct wfs_inode* allocate_inode() {
+	uint8_t* bitmap = (uint8_t*)((char*)regions[0] + superblock->i_bitmap_ptr);
 
 	off_t blk = -1;
-	for (uint32_t i = 0; i < sb->num_inodes / 8; i++) {
+	for (uint32_t i = 0; i < superblock->num_inodes / 8; i++) {
         if (bitmap[i] == 0xFF)
             continue;
 
-        for (uint32_t k = 0; k < 8; k++)
+        for (uint32_t k = 0; k < 8; k++) {
             if (!((bitmap[i] >> k) & 1)) {
-                bitmap[i] = bitmap[i] | (1 << k);
+				// allocate inodes on all disks
+				for(int j = 0; j < disk_count; j++) {
+					bitmap = (uint8_t*)((char*)regions[j] + superblock->i_bitmap_ptr);
+					bitmap[i] = bitmap[i] | (1 << k);
+				}
                 blk =  8 * i + k;
             }
+		}
     }
 
     if (blk < 0) return -ENOSPC;
@@ -93,8 +106,13 @@ int block_exists(struct wfs_sb *sb, off_t block_index) {
 	return (int)(b_bitmap + (block_index / 8)) & 0x1 << block_index % 8;
 }
 
-void *get_block(off_t block_index) {
+// use disk = -1 when using RAID 1v to get most frequent disk with lowest index
+void *get_block(off_t block_index, int disk) {
 	struct wfs_dentry *dir_block;
+	if(disk >= disk_count || disk < -1) {
+		perror("Invalid disk\n");
+		return(-1);
+	}
 	if(raid_mode == 0) {
 		// Raid 0 Case
 		int disk = block_index % disk_count;
@@ -105,11 +123,11 @@ void *get_block(off_t block_index) {
 			return -ENOENT;
 		}
 		dir_block = (struct wfs_dentry *)((char *)regions[disk] + superblock->d_blocks_ptr + (index * BLOCK_SIZE));
-	} else if(raid_mode == 1) {
+	} else if(raid_mode == 1 || disk != -1) {
 		// Raid 1 Case
 
 		// All disks are identical so just take from disk 0
-		if(!block_exists((struct wfs_sb*)regions[0], block_index)) {
+		if(!block_exists((struct wfs_sb*)regions[disk], block_index)) {
 			perror("Block was not allocated\n");
 			return -ENOENT;
 		}
@@ -169,7 +187,7 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name) {
 	// Search each data block
 	for(int i = 0; i < D_BLOCK; i++) {
 		if(block_indicies[i] == 0) continue;
-		if((curr_dentry = (struct wfs_dentry *) get_block(block_indicies[i])) <= 0) return curr_dentry;
+		if((curr_dentry = (struct wfs_dentry *) get_block(block_indicies[i], -1)) <= 0) return curr_dentry;
 		// Search each dentry in data block
 		for(int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++) {
 			if(strcmp(curr_dentry[j].name, name) == 0) {
@@ -270,7 +288,7 @@ static int wfs_read(const char* path, char *buf, size_t size, off_t offset, stru
 		// Retrieve block to read from
 		// get_block handles all raid on a per block basis
 		curr_block_index = curr_position / BLOCK_SIZE;
-		if((curr_block = get_block(curr_block_index)) <= 0) return curr_block;
+		if((curr_block = get_block(curr_block_index, -1)) <= 0) return curr_block;
 
 		// Calcuate size to read
 		to_read = BLOCK_SIZE - (curr_position % BLOCK_SIZE);
@@ -291,6 +309,15 @@ static int wfs_read(const char* path, char *buf, size_t size, off_t offset, stru
 }
 
 static int wfs_write(const char* path, const char *buf, size_t size, off_t offset, struct fuse_file_info* fi) {
+	(void)fi;
+	struct wfs_inode *inode;
+	if((inode = get_inode_from_path(path)) <= 0) {
+		return inode;
+	}
+
+	size_t written = 0;
+
+
     return 0;
 
 }
