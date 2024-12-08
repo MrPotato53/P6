@@ -22,41 +22,41 @@ void free_block(off_t blk, int disk_count) {
 	memset((char*)regions[disk_count] + blk, 0, BLOCK_SIZE);
 
 	off_t blk_index = (blk - superblock->d_blocks_ptr) / BLOCK_SIZE;
-	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->d_bitmap_ptr);
+	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->d_bitmap_ptr);
 
-	bitmap[blk_index / 32] ^= (1 << blk_index % 32);
+	bitmap[blk_index / 8] ^= (1 << blk_index % 8);
 }
 
 void free_inode(struct wfs_inode* inode, int disk_count) {
 	memset((char*)inode, 0, BLOCK_SIZE);
 
 	off_t blk_index = ((char*)inode - (char *)regions[disk_count] + superblock->i_blocks_ptr) / BLOCK_SIZE;
-	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->i_blocks_ptr);
+	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->i_blocks_ptr);
 
-	bitmap[blk_index / 32] ^= (1 << blk_index % 32);
+	bitmap[blk_index / 8] ^= (1 << blk_index % 8);
 }
 
 struct wfs_inode* get_inode(int n, int disk_count) {
-	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->i_blocks_ptr);
+	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->i_blocks_ptr);
 
-	if (bitmap[n / 32] & (1 << n % 32))
+	if (bitmap[n / 8] & (1 << n % 8))
 	return (struct wfs_inode*)(((char*)regions[disk_count] + superblock->i_blocks_ptr) + n * BLOCK_SIZE);
 
 	return NULL;
 }
 
 off_t allocate_block(int disk_count) {
-	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->d_bitmap_ptr);
+	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->d_bitmap_ptr);
 
 	off_t blk = -1;
-	for (uint32_t i = 0; i < superblock->num_data_blocks / 32; i++) {
-        if (bitmap[i] == 0xFFFFFFFF)
+	for (uint8_t i = 0; i < superblock->num_data_blocks / 8; i++) {
+        if (bitmap[i] == 0xFF)
             continue;
 
-        for (uint32_t k = 0; k < 32; k++)
+        for (uint8_t k = 0; k < 8; k++)
             if (!((bitmap[i] >> k) & 1)) {
                 bitmap[i] = bitmap[i] | (1 << k);
-                blk =  32 * i + k;
+                blk =  8 * i + k;
             }
     }
 	
@@ -67,17 +67,17 @@ off_t allocate_block(int disk_count) {
 
 struct wfs_inode* allocate_inode(int disk) {
 	struct wfs_sb* sb = (struct wfs_sb*)regions[disk_count];
-	uint32_t* bitmap = (uint32_t*)((char*)regions[disk_count] + superblock->i_bitmap_ptr);
+	uint8_t* bitmap = (uint8_t*)((char*)regions[disk_count] + superblock->i_bitmap_ptr);
 
 	off_t blk = -1;
-	for (uint32_t i = 0; i < sb->num_inodes / 32; i++) {
-        if (bitmap[i] == 0xFFFFFFFF)
+	for (uint32_t i = 0; i < sb->num_inodes / 8; i++) {
+        if (bitmap[i] == 0xFF)
             continue;
 
-        for (uint32_t k = 0; k < 32; k++)
+        for (uint32_t k = 0; k < 8; k++)
             if (!((bitmap[i] >> k) & 1)) {
                 bitmap[i] = bitmap[i] | (1 << k);
-                blk =  32 * i + k;
+                blk =  8 * i + k;
             }
     }
 
