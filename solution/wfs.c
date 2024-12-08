@@ -181,7 +181,7 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name) {
 	struct wfs_dentry *curr_dentry;
 
 	// Search each data block
-	for(int i = 0; i <= D_BLOCK; i++) {
+	for(int i = 0; i < N_BLOCKS; i++) {
 		if(block_indicies[i] == 0) continue;
 		if((curr_dentry = (struct wfs_dentry *) get_block(block_indicies[i], -1)) <= 0) return curr_dentry;
 		// Search each dentry in data block
@@ -362,17 +362,30 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 			return -ENOENT;
 		}
 
-		// Retrieve corresponding data block in memory
-		if((curr_block = get_block(curr_block_index, -1)) <= 0) return curr_block;
-
 		// Calculate size to write
 		to_write = BLOCK_SIZE - (curr_position % BLOCK_SIZE);
 		if(size - written < to_write) to_write = size - written;
 
-		// Perform write Operation
-		if(memcpy(curr_block + (curr_position % BLOCK_SIZE), buf + written, to_write) <= 0) {
-			perror("memcpy failed\n");
-			return -1;
+		if(raid_mode == 0) {
+			// Retrieve corresponding data block in memory
+			if((curr_block = get_block(curr_block_index, -1)) <= 0) return curr_block;
+
+			// Perform write Operation
+			if(memcpy(curr_block + (curr_position % BLOCK_SIZE), buf + written, to_write) <= 0) {
+				perror("memcpy failed\n");
+				return -1;
+			}
+		} else if(raid_mode >= 1) {
+			for(int i = 0; i < disk_count; i++) {
+				// Retrieve corresponding data block in memory
+				if((curr_block = get_block(curr_block_index, i)) <= 0) return curr_block;
+
+				// Perform write Operation
+				if(memcpy(curr_block + (curr_position % BLOCK_SIZE), buf + written, to_write) <= 0) {
+					perror("memcpy failed\n");
+					return -1;
+				}
+			}
 		}
 
 		// Update indexing variables
@@ -380,12 +393,33 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 		curr_position += to_write;
 	}
 
-    return 0;
+    return written;
 }
 
 static int wfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info* fi) {
-    return 0;
+	filler(buf, ".", NULL, 0);
+	filler(buf, "..", NULL, 0);
 
+	struct wfs_inode *inode;
+	if((inode = get_inode_from_path(path)) <= 0 || !S_IFDIR(inode->mode)) {
+		return -ENOENT;
+	}
+
+	struct wfs_dentry *block;
+	for(int i = 0; i < N_BLOCKS; i++) {
+		if(inode->blocks[i] != 0) {
+			if((block = get_block(inode->blocks[i], -1)) <= 0) {
+				return block;
+			}
+
+			for(int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++) {
+				if(block[j].num != 0) {
+					filler(buf, block[j].name, NULL, 0);
+				}
+			}
+		}
+	}
+    return 0;
 }
 
 
