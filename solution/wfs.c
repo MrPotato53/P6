@@ -327,6 +327,7 @@ struct wfs_inode *get_inode_from_path(const char *path) {
 	struct wfs_inode *curr_inode = get_inode(0);
 
 	if(strcmp(path, "/") == 0) {
+		printf("root node: %p", curr_inode);
 		return curr_inode;
 	}
 
@@ -342,6 +343,7 @@ struct wfs_inode *get_inode_from_path(const char *path) {
 		// Check if curr inode is directory
 		if(!(S_IFDIR & curr_inode->mode)) {
 			free(path_copy);
+			printf("Not a directory\n");
 			return NULL;
 		}
 
@@ -350,6 +352,7 @@ struct wfs_inode *get_inode_from_path(const char *path) {
 		void *blockptr;
 		if((dentry = find_dentry(curr_inode, tok, &blocknumber, &blockptr)) == NULL) {
 			free(path_copy);
+			printf("Find dentry failed \n");
 			return NULL;
 		}
 		(void)blocknumber;
@@ -357,6 +360,7 @@ struct wfs_inode *get_inode_from_path(const char *path) {
 
 		if((curr_inode = get_inode(dentry->num)) == NULL) {
 			free(path_copy);
+			printf("Get inode failed\n");
 			return NULL;
 		}
 
@@ -527,6 +531,7 @@ static int wfs_mkdir(const char* path, mode_t mode) {
 	if (parent == NULL) {
 		free(path_copy1);
 		free(path_copy2);
+		printf("Failed Here\n");
 		return -ENOMEM;
 	}
 
