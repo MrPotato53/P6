@@ -89,7 +89,7 @@ int main(int argc, char *argv[]) {
 
         struct wfs_inode rootInode = {0};
         rootInode.num = 0;
-        rootInode.mode = S_IRWXU;
+        rootInode.mode = S_IRWXU | S_IFDIR;
         rootInode.uid = getuid();
         rootInode.gid = getgid();
         rootInode.nlinks = 2;
