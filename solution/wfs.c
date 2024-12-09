@@ -250,7 +250,7 @@ off_t get_datablock_index_from_inode(int i, off_t *blocks) {
 // Return NULL if fail
 struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name, off_t *blocknumber, void **blockptr) {
 	// Make sure it's a directory
-	if(!(S_IFDIR | dir_inode->mode)) {
+	if(!(S_IFDIR & dir_inode->mode)) {
         return NULL;
     }
 
@@ -340,7 +340,7 @@ struct wfs_inode *get_inode_from_path(const char *path) {
 	struct wfs_dentry *dentry;
 	while(tok) {
 		// Check if curr inode is directory
-		if(!(S_IFDIR | curr_inode->mode)) {
+		if(!(S_IFDIR & curr_inode->mode)) {
 			free(path_copy);
 			return NULL;
 		}
@@ -369,7 +369,7 @@ struct wfs_inode *get_inode_from_path(const char *path) {
 
 // Returns -ENOENT if fail
 int unlink_(struct wfs_inode *parent, char *filename) {
-	if(!(S_IFDIR | parent->mode)) {
+	if(!(S_IFDIR & parent->mode)) {
 		perror("Trying to unlink from non-directory\n");
 		return -ENOENT;
 	}
@@ -386,7 +386,7 @@ int unlink_(struct wfs_inode *parent, char *filename) {
 		return -ENOENT;
 	}
 
-    if(S_IFDIR | inode->mode) {
+    if(S_IFDIR & inode->mode) {
 		// ENOENT because expecting file, not directory
         return -ENOENT;
     }
@@ -596,7 +596,7 @@ static int wfs_rmdir(const char* path) {
 	free(path_copy);
 
 	// check if actually a directory
-    if (!(S_IFDIR | rem_dir->mode)) return -ENOTDIR;
+    if (!(S_IFDIR & rem_dir->mode)) return -ENOTDIR;
 
 	// make sure directory empty
 	struct wfs_dentry *curr_dentry;
@@ -746,7 +746,7 @@ static int wfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off_
 	filler(buf, "..", NULL, 0);
 
 	struct wfs_inode *inode;
-	if((inode = get_inode_from_path(path)) == NULL || !(S_IFDIR | inode->mode)) {
+	if((inode = get_inode_from_path(path)) == NULL || !(S_IFDIR & inode->mode)) {
 		return -ENOENT;
 	}
 
