@@ -99,7 +99,7 @@ off_t allocate_block() {
     return superblock->d_blocks_ptr + BLOCK_SIZE * blk;
 }
 
-off_t allocate_inode() {
+off_t allocate_inode(mode_t mode) {
 	uint8_t* bitmap = (uint8_t*)((char*)regions[0] + superblock->i_bitmap_ptr);
 
 	off_t blk = -1;
@@ -123,6 +123,12 @@ off_t allocate_inode() {
 
     struct wfs_inode* inode = (struct wfs_inode*)((char*)regions[disk_count] + superblock->i_bitmap_ptr + BLOCK_SIZE * blk);
     inode->num = blk;
+	inode->mode = mode;
+    inode->uid = getuid();
+    inode->gid = getgid();
+    inode->size = 0;
+    inode->nlinks = 1;
+    return blk;
     return blk;
 }
 
@@ -224,6 +230,49 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name, of
 	}
 	// No matching dentry found
 	return -ENOENT;
+}
+
+int alloc_dentry(struct wfs_inode* dir_inode, int num, char* name) {
+	struct wfs_dentry *curr_dentry;
+
+	// find free block
+    for (int i = 0; i < D_BLOCK; i++) {
+        if (dir_inode->blocks[i] == 0) continue;
+        if((curr_dentry = (struct wfs_dentry *) get_block(dir_inode->blocks[i], -1)) <= 0) return curr_dentry;
+
+        // find free dentry in this block
+        for (int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++) {
+            if (curr_dentry[j].num == 0) {
+                curr_dentry[j].num = num;
+                strncpy(curr_dentry[j].name, name, MAX_NAME);
+                dir_inode->nlinks++; 
+                return 0;
+            }
+        }
+    }
+
+    // no free dentry or block found
+    for (int i = 0; i < D_BLOCK; i++) {
+        if (dir_inode->blocks[i] == 0) { // allocate unallocated block from before
+            off_t new_block = allocate_data_block();
+            if (new_block < 0) return new_block;
+
+            dir_inode->blocks[i] = new_block;
+
+            // initialize entries
+			if((curr_dentry = (struct wfs_dentry *) get_block(dir_inode->blocks[i], -1)) <= 0) return curr_dentry;
+            memset(curr_dentry, 0, BLOCK_SIZE);
+            
+			curr_dentry[0].num = num;
+            strncpy(curr_dentry[0].name, name, MAX_NAME);
+            dir_inode->nlinks++;
+            dir_inode->size += BLOCK_SIZE;
+
+            return 0;
+        }
+    }
+
+    return -ENOSPC;
 }
 
 struct wfs_inode *get_inode_from_path(char *path) {
@@ -352,12 +401,71 @@ static int wfs_getattr(const char *path, struct stat *stbuf) {
 }
 
 static int wfs_mknod(const char* path, mode_t mode, dev_t rdev) {
-    return 0;
+    (void)rdev;
+	printf("wfs_mknod, path: (%s)\n", path);
+
+	char *path_copy1 = strdup(path);
+    char *path_copy2 = strdup(path);
+    if (!path_copy1 || !path_copy2) {
+        free(path_copy1);
+        free(path_copy2);
+        return -ENOMEM;
+    }
+
+    char *parent_path = dirname(path_copy1);
+    char *entry_name = basename(path_copy2);
+
+    struct wfs_inode* parent = get_inode_from_path(parent_path);
+    if (parent < 0) {
+		free(path_copy1);
+        free(path_copy2);
+        return -ENOMEM;
+	}
+
+	off_t blk = allocate_inode(S_IFREG | mode);
+	if (blk < 0) {
+		free(path_copy1);
+        free(path_copy2);
+		return -ENOENT;
+	}
+
+    if (alloc_dentry(parent, blk, entry_name) < 0) return -ENOSPC;
+	
+	return 0;
 
 }
 
 static int wfs_mkdir(const char* path, mode_t mode) {
-    return 0;
+    printf("wfs_mkdir, path: (%s)\n", path);
+
+	char *path_copy1 = strdup(path);
+    char *path_copy2 = strdup(path);
+    if (!path_copy1 || !path_copy2) {
+        free(path_copy1);
+        free(path_copy2);
+        return -ENOMEM;
+    }
+
+    char *parent_path = dirname(path_copy1);
+    char *entry_name = basename(path_copy2);
+
+	struct wfs_inode* parent = get_inode_from_path(parent_path);
+    if (parent < 0) {
+		free(path_copy1);
+        free(path_copy2);
+        return -ENOMEM;
+	}
+
+    off_t blk = allocate_inode(S_IFDIR | mode);
+	if (blk < 0) {
+		free(path_copy1);
+        free(path_copy2);
+		return -ENOENT;
+	}
+
+    if (alloc_dentry(parent, blk, entry_name) < 0) return -ENOSPC;
+	
+	return 0;
 
 }
 
@@ -398,6 +506,75 @@ static int wfs_unlink(const char* path) {
 }
 
 static int wfs_rmdir(const char* path) {
+	printf("wfs_rmdir, path: %s\n", path);
+
+	if (strcmp(path, "/") == 0) return -EPERM;
+
+    char *path_copy1 = strdup(path);
+    char *path_copy2 = strdup(path);
+    if (!path_copy1 || !path_copy2) {
+        free(path_copy1);
+        free(path_copy2);
+        return -ENOMEM;
+    }
+    char *parent_path = dirname(path_copy1);
+    char *entry_name = basename(path_copy2);
+
+    struct wfs_inode* parent = get_inode_from_path(parent_path);
+    if (parent < 0) {
+		free(path_copy1);
+        free(path_copy2);
+        return -ENOMEM;
+	}
+
+    struct wfs_inode* rem_dir = get_inode_from_path(path);
+    if (rem_dir < 0) {
+		free(path_copy1);
+        free(path_copy2);
+        return -ENOMEM;
+	}
+
+	// check if actually a directory
+    if ((rem_dir->mode & S_IFDIR) == 0) return -ENOTDIR;
+
+	// make sure directory empty
+	struct wfs_dentry *curr_dentry;
+    for (int i = 0; i < N_BLOCKS; i++) {
+        if (rem_dir->blocks[i] != 0 && rem_dir->blocks[i] != -1) {
+            if ((curr_dentry = (struct wfs_dentry*) get_block(rem_dir->blocks[i], -1)) < 0) return curr_dentry;
+            
+            for (int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++)
+                if (block[j].num != 0) return -ENOTEMPTY; // dentry found, directory not empty
+        }
+    }
+
+	int blk_index; 
+	void *blk_ptr;
+
+	struct wfs_dentry *entry = NULL;
+	struct wfs_dentry pblock;
+
+	for (int i = 0; i < N_BLOCKS && entry == NULL; i++) {
+		if (parent->blocks[i] == -1 || parent->blocks[i] == 0) continue;
+		
+		if ((pblock = (struct wfs_dentry*) get_block(parent->blocks[i], -1)) < 0) return pblock;
+
+		for (int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++) {
+			if (pblock[j].num != 0 && strcmp(pblock[j].name, entry_name) == 0) {
+				pblock[j].num = 0;
+				blk_index = parent->blocks[i];
+				blk_ptr = pblock;
+				entry = &pblock[j];
+				break;
+			}
+		}
+	}
+	if (!entry) return -ENOENT; // no block was removed
+
+	// update meta data
+
+	// free directory inode + all blocks
+
     return 0;
 
 }
