@@ -46,6 +46,7 @@ void update_all_datablocks(off_t index, void *block) {
 
 // Return NULL if fail
 struct wfs_inode* get_inode(int n) {
+	printf("Metadata pointer: %p\n", metadata);
 	uint8_t* bitmap = (uint8_t*)((char*)metadata + superblock->i_bitmap_ptr);
 
 	if (bitmap[n / 8] & (1 << n % 8))
@@ -792,8 +793,6 @@ int main(int argc, char *argv[]) {
 		disk_count++;
 	}
 
-	printf("mount point: %s\n", argv[argc - 1]);
-
 	if(disk_count < 2) {
 		perror("Not enough disks, need at least 2\n");
 		exit(1);
@@ -801,7 +800,6 @@ int main(int argc, char *argv[]) {
 
 	// Open all disks and map them to regions array
 	for(int i = 0; i < disk_count; i++) {
-		printf("opening %s\n", argv[i + 1]);
 		if((fd[i] = open(argv[i + 1], O_RDWR)) <= 0) {
 			printf("open failed on %s\n", argv[i + 1]);
 			exit(-ENOENT);
@@ -839,10 +837,13 @@ int main(int argc, char *argv[]) {
 	superblock = ((struct wfs_sb *)regions[0]);
 	raid_mode = superblock->raid_mode;
 	metadata = malloc(superblock->d_blocks_ptr);
+	if(!metadata) {
+		return -ENOMEM;
+	}
 	memcpy(metadata, regions[0], superblock->d_blocks_ptr);
 
 	for (int i = 1; i < disk_count; i++)
-		if (memcmp(regions[0], regions[i], superblock->d_blocks_ptr) != 0) {
+		if (memcmp((char *)regions[0] + superblock->i_bitmap_ptr, (char *)regions[i] + superblock->i_bitmap_ptr, superblock->d_blocks_ptr - superblock->i_bitmap_ptr) != 0) {
 			perror("meta data doesn't match across disks\n");
 			exit(-1);
 		}
