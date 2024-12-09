@@ -422,7 +422,7 @@ static int wfs_mknod(const char* path, mode_t mode, dev_t rdev) {
         return -ENOMEM;
 	}
 
-	off_t blk = allocate_inode(S_IFREG | mode);
+	off_t blk = allocate_inode(S_IFREG(mode));
 	if (blk < 0) {
 		free(path_copy1);
         free(path_copy2);
@@ -456,7 +456,7 @@ static int wfs_mkdir(const char* path, mode_t mode) {
         return -ENOMEM;
 	}
 
-    off_t blk = allocate_inode(S_IFDIR | mode);
+    off_t blk = allocate_inode(S_IFDIR(mode));
 	if (blk < 0) {
 		free(path_copy1);
         free(path_copy2);
@@ -535,7 +535,7 @@ static int wfs_rmdir(const char* path) {
 	}
 
 	// check if actually a directory
-    if ((rem_dir->mode & S_IFDIR) == 0) return -ENOTDIR;
+    if (!S_IFDIR(rem_dir->mode)) return -ENOTDIR;
 
 	// make sure directory empty
 	struct wfs_dentry *curr_dentry;
@@ -544,7 +544,7 @@ static int wfs_rmdir(const char* path) {
             if ((curr_dentry = (struct wfs_dentry*) get_block(rem_dir->blocks[i], -1)) < 0) return curr_dentry;
             
             for (int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++)
-                if (block[j].num != 0) return -ENOTEMPTY; // dentry found, directory not empty
+                if (curr_dentry[j].num != 0) return -ENOTEMPTY; // dentry found, directory not empty
         }
     }
 
@@ -552,7 +552,7 @@ static int wfs_rmdir(const char* path) {
 	void *blk_ptr;
 
 	struct wfs_dentry *entry = NULL;
-	struct wfs_dentry pblock;
+	struct wfs_dentry *pblock;
 
 	for (int i = 0; i < N_BLOCKS && entry == NULL; i++) {
 		if (parent->blocks[i] == -1 || parent->blocks[i] == 0) continue;
@@ -574,6 +574,7 @@ static int wfs_rmdir(const char* path) {
 	// update meta data
 
 	// free directory inode + all blocks
+	free_inode(rem_dir->num);
 
     return 0;
 
