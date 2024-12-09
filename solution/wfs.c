@@ -79,7 +79,7 @@ void *get_block(off_t block_index) {
 		return (void *)((char *)regions[disk] + superblock->d_blocks_ptr + (index * BLOCK_SIZE));
 	} else if(raid_mode == 1) {
 		// Raid 1 Case
-		return (void *)((char *)metadata + superblock->d_blocks_ptr + (block_index * BLOCK_SIZE));
+		return (void *)((char *)regions[0] + superblock->d_blocks_ptr + (block_index * BLOCK_SIZE));
 	} else if(raid_mode == 2) {
 		// Raid 1v Case
 		int block_votes[MAX_DISK] = {0}; // number of matches each block has
