@@ -18,22 +18,51 @@ int raid_mode = -1;
 struct wfs_sb *superblock;
 
 
-void free_block(off_t blk, int disk) {
-	memset((char*)regions[disk] + blk, 0, BLOCK_SIZE);
-
-	off_t blk_index = (blk - superblock->d_blocks_ptr) / BLOCK_SIZE;
-	uint8_t* bitmap = (uint8_t*)((char*)regions[disk] + superblock->d_bitmap_ptr);
-
-	bitmap[blk_index / 8] ^= (1 << blk_index % 8);
+void free_block(off_t blk) {
+	int disk;
+	if(raid_mode == 0) {
+		disk = regions[blk % disk_count];
+		uint8_t* bitmap = (uint8_t*)((char*)regions[disk] + superblock->d_bitmap_ptr);
+		bitmap[blk / 8] &= !(1 << (blk % 8));
+	} else {
+		for(int i = 0; i < disk_count; i++) {
+			uint8_t* bitmap = (uint8_t*)((char*)regions[i] + superblock->d_bitmap_ptr);
+			bitmap[blk / 8] &= !(1 << (blk % 8));
+		}
+	}
 }
 
-void free_inode(struct wfs_inode* inode, int disk) {
-	memset((char*)inode, 0, BLOCK_SIZE);
+void free_inode(int index) {
+	struct wfs_inode *inode;
+	if((inode = get_inode(index, -1)) <= 0) {
+		return inode;
+	}
 
-	off_t blk_index = ((char*)inode - (char *)regions[disk] + superblock->i_blocks_ptr) / BLOCK_SIZE;
-	uint8_t* bitmap = (uint8_t*)((char*)regions[disk] + superblock->i_blocks_ptr);
+	for(int i = 0; i <= D_BLOCK; i++) {
+		if(inode->blocks[i] != 0) {
+			free_block(inode->blocks[i]);
+		}
+	}
 
-	bitmap[blk_index / 8] ^= (1 << blk_index % 8);
+	if(inode->blocks[IND_BLOCK] != 0) {
+		off_t *ind_block;
+		if((ind_block = get_block(inode->blocks[IND_BLOCK], -1)) <= 0) {
+			return ind_block;
+		}
+
+		for(int i = 0; i <= BLOCK_SIZE / sizeof(off_t); i++) {
+			if(ind_block[i] != 0) {
+				free_block(ind_block[i]);
+			}
+		}
+		free(ind_block);
+	}
+
+	for(int i = 0; i <= disk_count; i++) {
+		uint8_t* bitmap = (uint8_t*)((char*)regions[i] + superblock->i_blocks_ptr);
+		bitmap[index / 8] &= !(1 << (index % 8));
+	}
+	return 0;
 }
 
 struct wfs_inode* get_inode(int n, int disk) {
@@ -176,7 +205,7 @@ void *get_block(off_t block_index, int disk) {
 	return (void *)dir_block;
 }
 
-struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name) {
+struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name, off_t *blocknumber, void **blockptr) {
 	off_t *block_indicies = dir_inode->blocks;
 	struct wfs_dentry *curr_dentry;
 
@@ -187,6 +216,8 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name) {
 		// Search each dentry in data block
 		for(int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++) {
 			if(strcmp(curr_dentry[j].name, name) == 0) {
+				*blocknumber = block_indicies[i];
+				*blockptr = curr_dentry;
 				return &curr_dentry[j];
 			}
 		}
@@ -215,7 +246,9 @@ struct wfs_inode *get_inode_from_path(char *path) {
 		}
 
 		// Find dentry in current inode and corresponding next inode
-		if((dentry = find_dentry(curr_inode, tok)) <= 0) {
+		off_t blocknumber;
+		void *blockptr;
+		if((dentry = find_dentry(curr_inode, tok, &blocknumber, &blockptr)) <= 0) {
 			free(rem_path);
 			return dentry;
 		}
@@ -244,6 +277,18 @@ int update_all_inodes(struct wfs_inode *inode) {
 	return 0;
 }
 
+int update_all_datablocks(off_t index, void *block) {
+	if(raid_mode >= 1) {
+		for(int i = 0; i < disk_count; i++) {
+			if((memcpy((char *)regions[i] + superblock->d_blocks_ptr + index * BLOCK_SIZE, block, BLOCK_SIZE)) <= 0) {
+				perror("memcpy failed\n");
+				return -1;
+			}
+		}
+	}
+	return 0;
+}
+
 off_t get_datablock_index_from_inode_block_index(int i, off_t *blocks) {
 	if(i >= 0 || i <= D_BLOCK) {
 		if(blocks[i] == 0) return -1;
@@ -257,6 +302,38 @@ off_t get_datablock_index_from_inode_block_index(int i, off_t *blocks) {
 	}
 	perror("Block index out of range\n");
 	return -1;
+}
+
+int unlink_(struct wfs_inode *parent, char *filename) {
+	if(!I_IFDIR(parent->mode)) {
+		perror("Trying to unlink from non-directory\n");
+		return -1;
+	}
+
+	struct wfs_dentry *dentry;
+	void *blockptr;
+	off_t blocknumber;
+	if((dentry = find_dentry(parent, filename, &blocknumber, &blockptr)) <= 0) {
+		return dentry;
+	}
+
+	struct wfs_inode *inode;
+	if((inode = get_inode(dentry->num, 0)) <= 0) {
+		return inode;
+	}
+    if(S_IFDIR(inode->mode)) {
+        return -1;
+    }
+
+	inode->nlinks--;
+	if(inode->nlinks <= 0) {
+		free_inode(dentry->num);
+	}
+	dentry->num = 0;
+
+	update_all_inodes(inode);
+	update_all_datablocks(blocknumber, blockptr);
+	return 0;
 }
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
@@ -285,8 +362,39 @@ static int wfs_mkdir(const char* path, mode_t mode) {
 }
 
 static int wfs_unlink(const char* path) {
-    return 0;
+    struct wfs_inode *inode_to_unlink;
+	if((inode_to_unlink = get_inode_from_path(path)) <= 0) {
+		return inode_to_unlink;
+	}
 
+	int last_slash_index = -1;
+	for(int i = 0; i < strlen(path); i++) {
+		if(path[i] == '/') last_slash_index = i;
+	}
+
+	if(last_slash_index <= 0) {
+		perror("No parent in path\n");
+		return -1;
+	}
+
+	char *parent_path = strdup(path);
+	parent_path[last_slash_index] = '\0';
+
+	struct wfs_inode *parent;
+	if((parent = get_inode_from_path(parent_path)) <= 0) {
+		return parent;
+	}
+
+	if(last_slash_index == (strlen(path) - 1)) {
+		perror("No filename specified\n");
+		return -ENOENT;
+	}
+	char *child_filename = path[last_slash_index + 1];
+
+	unlink_(parent, child_filename);
+	free(parent_path);
+	
+	return 0;
 }
 
 static int wfs_rmdir(const char* path) {
@@ -365,28 +473,18 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 		// Calculate size to write
 		to_write = BLOCK_SIZE - (curr_position % BLOCK_SIZE);
 		if(size - written < to_write) to_write = size - written;
+		
 
-		if(raid_mode == 0) {
-			// Retrieve corresponding data block in memory
-			if((curr_block = get_block(curr_block_index, -1)) <= 0) return curr_block;
+		// Retrieve corresponding data block in memory
+		if((curr_block = get_block(curr_block_index, 0)) <= 0) return curr_block;
 
-			// Perform write Operation
-			if(memcpy(curr_block + (curr_position % BLOCK_SIZE), buf + written, to_write) <= 0) {
-				perror("memcpy failed\n");
-				return -1;
-			}
-		} else if(raid_mode >= 1) {
-			for(int i = 0; i < disk_count; i++) {
-				// Retrieve corresponding data block in memory
-				if((curr_block = get_block(curr_block_index, i)) <= 0) return curr_block;
-
-				// Perform write Operation
-				if(memcpy(curr_block + (curr_position % BLOCK_SIZE), buf + written, to_write) <= 0) {
-					perror("memcpy failed\n");
-					return -1;
-				}
-			}
+		// Perform write Operation
+		if(memcpy(curr_block + (curr_position % BLOCK_SIZE), buf + written, to_write) <= 0) {
+			perror("memcpy failed\n");
+			return -1;
 		}
+
+		update_all_datablocks(curr_block_index, (void*)curr_block);
 
 		// Update indexing variables
 		written += to_write;
