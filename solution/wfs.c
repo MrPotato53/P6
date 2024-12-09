@@ -46,7 +46,6 @@ void update_all_datablocks(off_t index, void *block) {
 
 // Return NULL if fail
 struct wfs_inode* get_inode(int n) {
-	printf("Metadata pointer: %p\n", metadata);
 	uint8_t* bitmap = (uint8_t*)((char*)metadata + superblock->i_bitmap_ptr);
 
 	if (bitmap[n / 8] & (1 << n % 8))
@@ -404,24 +403,23 @@ int unlink_(struct wfs_inode *parent, char *filename) {
 }
 
 // Returns -ENOENT if fail
-int separate_paths(char *path_copy, char **parent_path, char **entry_name) {
+int separate_paths(char *path_copy1, char *path_copy2, char **parent_path, char **entry_name) {
 
 	int last_slash_index = -1;
-	for(int i = 0; i < strlen(path_copy); i++) {
-		if(path_copy[i] == '/') last_slash_index = i;
+	for(int i = 0; i < strlen(path_copy1); i++) {
+		if(path_copy1[i] == '/') last_slash_index = i;
 	}
 
-	if(last_slash_index <= 0 || last_slash_index == (strlen(path_copy) - 1)) {
+	if(last_slash_index < 0 || last_slash_index == (strlen(path_copy1) - 1)) {
 		perror("Either no parent or child in path\n");
 		return -ENOENT;
 	}
 
-	*parent_path = path_copy;
-	parent_path[last_slash_index] = '\0';
-	*entry_name = path_copy + (last_slash_index + 1);
+	*parent_path = path_copy1;
+	parent_path[last_slash_index + 1] = '\0';
+	*entry_name = path_copy2 + (last_slash_index + 1);
 	return 0;
 }
-
 
 static int wfs_getattr(const char *path, struct stat *stbuf) {
 	struct wfs_inode *inode;
@@ -447,41 +445,52 @@ static int wfs_mknod(const char* path, mode_t mode, dev_t rdev) {
 		return -EEXIST;
 	}
 
-	char *path_copy = strdup(path);
-	if (!path_copy) {
-		free(path_copy);
+	char *path_copy1 = strdup(path);
+	char *path_copy2 = strdup(path);
+	if (!path_copy1 || !path_copy2) {
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOMEM;
 	}
 
 	// obtain parent path and created file name
 	char *parent_path;
 	char *entry_name;
-	if(separate_paths(path_copy, &parent_path, &entry_name) < 0) return -ENOENT;
+	if(separate_paths(path_copy1, path_copy2, &parent_path, &entry_name) < 0) {
+		free(path_copy1);
+		free(path_copy2);
+		return -ENOENT;
+	}
 
 	struct wfs_inode* parent = get_inode_from_path(parent_path);
 	if (parent == NULL) {
-		free(path_copy);
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOMEM;
 	}
 
 	if((parent->mode & S_IFDIR) == 0) {
-		free(path_copy);
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOENT;
 	}
 
 	off_t blk = allocate_inode(mode);
 	if (blk < 0) {
-		free(path_copy);
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOENT;
 	}
 
-	free(path_copy);
+	free(path_copy1);
 	if (alloc_dentry(parent, blk, entry_name) < 0){
 		int8_t *bitmap = (int8_t *)((char *)metadata + superblock->i_bitmap_ptr);
 		bitmap[blk / 8] &= 1 << blk % 8;
 		update_metadata();
+		free(path_copy2);
 		return -ENOSPC;
 	} 
+	free(path_copy2);
 	get_inode(blk)->nlinks++;
 	update_metadata();
 	
@@ -497,41 +506,52 @@ static int wfs_mkdir(const char* path, mode_t mode) {
 		return -EEXIST;
 	}
 
-	char *path_copy = strdup(path);
-	if (!path_copy) {
-		free(path_copy);
+	char *path_copy1 = strdup(path);
+	char *path_copy2 = strdup(path);
+	if (!path_copy1 || !path_copy2) {
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOMEM;
 	}
 
 	// obtain parent path and created directory name
 	char *parent_path;
 	char *entry_name;
-	if(separate_paths(path_copy, &parent_path, &entry_name) < 0) return -ENOENT;
+	if(separate_paths(path_copy1, path_copy2, &parent_path, &entry_name) < 0) {
+		free(path_copy1);
+		free(path_copy2);
+		return -ENOENT;
+	}
 
 	struct wfs_inode* parent = get_inode_from_path(parent_path);
 	if (parent == NULL) {
-		free(path_copy);
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOMEM;
 	}
 
 	if((parent->mode & S_IFDIR) == 0) {
-		free(path_copy);
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOENT;
 	}
 
 	off_t blk = allocate_inode(mode | S_IFDIR);
 	if (blk < 0) {
-		free(path_copy);
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOENT;
 	}
 
-	free(path_copy);
+	free(path_copy1);
 	if (alloc_dentry(parent, blk, entry_name) < 0){
 		int8_t *bitmap = (int8_t *)((char *)metadata + superblock->i_bitmap_ptr);
 		bitmap[blk / 8] &= 1 << blk % 8;
 		update_metadata();
+		free(path_copy2);
 		return -ENOSPC;
 	} 
+	free(path_copy2);
 	get_inode(blk)->nlinks++;
 	update_metadata();
 	
@@ -544,24 +564,33 @@ static int wfs_unlink(const char* path) {
 		return -ENOENT;
 	}
 
-	char *path_copy = strdup(path);
-	if (!path_copy) {
-		free(path_copy);
+	char *path_copy1 = strdup(path);
+	char *path_copy2 = strdup(path);
+	if (!path_copy1 || !path_copy2) {
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOMEM;
 	}
 
 	// obtain parent path and created directory name
 	char *parent_path;
 	char *child_filename;
-	if(separate_paths(path_copy, &parent_path, &child_filename) < 0) return -ENOENT;
+	if(separate_paths(path_copy1, path_copy2, &parent_path, &child_filename) < 0) {
+		free(path_copy1);
+		free(path_copy2);
+		return -ENOENT;
+	}
 
 	struct wfs_inode *parent;
 	if((parent = get_inode_from_path(parent_path)) == NULL) {
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOENT;
 	}
 
 	unlink_(parent, child_filename);
-	free(parent_path);
+	free(path_copy1);
+	free(path_copy2);
 	update_metadata();
 	return 0;
 }
@@ -571,33 +600,40 @@ static int wfs_rmdir(const char* path) {
 
 	if (strcmp(path, "/") == 0) return -EPERM;
 
-	char *path_copy = strdup(path);
-	if (!path_copy) {
-		free(path_copy);
+	char *path_copy1 = strdup(path);
+	char *path_copy2 = strdup(path);
+	if (!path_copy1 || !path_copy2) {
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOMEM;
 	}
 
 	// obtain parent path and created directory name
 	char *parent_path;
 	char *entry_name;
-	if(separate_paths(path_copy, &parent_path, &entry_name) < 0) return -ENOENT;
+	if(separate_paths(path_copy1, path_copy2, &parent_path, &entry_name) < 0) return -ENOENT;
 
 	struct wfs_inode* parent = get_inode_from_path(parent_path);
 	if (parent == NULL) {
-		free(path_copy);
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOMEM;
 	}
 
 	struct wfs_inode* rem_dir = get_inode_from_path(path);
 	if (rem_dir == NULL) {
-		free(path_copy);
+		free(path_copy1);
+		free(path_copy2);
 		return -ENOMEM;
 	}
 
-	free(path_copy);
+	free(path_copy1);
 
 	// check if actually a directory
-	if (!(S_IFDIR & rem_dir->mode)) return -ENOTDIR;
+	if (!(S_IFDIR & rem_dir->mode)){
+		free(path_copy2);
+		return -ENOTDIR;
+	}
 
 	// make sure directory empty
 	struct wfs_dentry *curr_dentry;
@@ -606,7 +642,10 @@ static int wfs_rmdir(const char* path) {
 			if ((curr_dentry = (struct wfs_dentry*) get_block(rem_dir->blocks[i])) == NULL) return -1;
 			
 			for (int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++)
-				if (curr_dentry[j].num != 0) return -ENOTEMPTY; // dentry found, directory not empty
+				if (curr_dentry[j].num != 0) {
+					free(path_copy2);
+					return -ENOTEMPTY; // dentry found, directory not empty
+				} 
 		}
 	}
 
@@ -614,6 +653,7 @@ static int wfs_rmdir(const char* path) {
 	void *blk_ptr;
 
 	struct wfs_dentry *dentry_to_clear = find_dentry(parent, entry_name, &blk_index, &blk_ptr);
+	free(path_copy2);
 	if(dentry_to_clear == NULL) return -ENOENT;
 
 	dentry_to_clear->num = 0;
