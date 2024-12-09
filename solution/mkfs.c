@@ -97,6 +97,9 @@ int main(int argc, char *argv[]) {
         rootInode.atim = time(NULL);
         rootInode.mtim = time(NULL);
         rootInode.ctim = time(NULL);
+        for(int i = 0; i < N_BLOCKS; i ++) {
+            rootInode.blocks[i] = -1;
+        }
 
         if (lseek(fd, sb.i_blocks_ptr, SEEK_SET) < 0 || write(fd, &rootInode, sizeof(struct wfs_inode)) < 0) exit(1);
     }

@@ -251,6 +251,7 @@ off_t get_datablock_index_from_inode(int i, off_t *blocks) {
 struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name, off_t *blocknumber, void **blockptr) {
 	// Make sure it's a directory
 	if(!(S_IFDIR & dir_inode->mode)) {
+		printf("Parent is not directory\n");
 		return NULL;
 	}
 
@@ -274,6 +275,7 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name, of
 		}
 	}
 	// No matching dentry found
+	printf("No matching dentry found\n");
 	return NULL;
 }
 
@@ -327,7 +329,7 @@ struct wfs_inode *get_inode_from_path(const char *path) {
 	struct wfs_inode *curr_inode = get_inode(0);
 
 	if(strcmp(path, "/") == 0) {
-		printf("root node: %p", curr_inode);
+		printf("root node: %p", (void *)curr_inode);
 		return curr_inode;
 	}
 
@@ -420,7 +422,7 @@ int separate_paths(char *path_copy1, char *path_copy2, char **parent_path, char 
 	}
 
 	*parent_path = path_copy1;
-	parent_path[last_slash_index + 1] = '\0';
+	(*parent_path)[last_slash_index + 1] = '\0';
 	*entry_name = path_copy2 + (last_slash_index + 1);
 	return 0;
 }
