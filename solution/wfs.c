@@ -46,7 +46,7 @@ void update_all_datablocks(off_t index, void *block) {
 
 // Return NULL if fail
 struct wfs_inode* get_inode(int n) {
-	uint8_t* bitmap = (uint8_t*)((char*)metadata + superblock->i_blocks_ptr);
+	uint8_t* bitmap = (uint8_t*)((char*)metadata + superblock->i_bitmap_ptr);
 
 	if (bitmap[n / 8] & (1 << n % 8))
 		return (struct wfs_inode*)(((char*)metadata + superblock->i_blocks_ptr) + n * BLOCK_SIZE);
@@ -70,53 +70,41 @@ void *get_block(off_t block_index) {
 		perror("Block was not allocated\n");
 		return NULL;
 	}
-	struct wfs_dentry *dir_block;
+
 	if(raid_mode == 0) {
 		// Raid 0 Case
 		int disk = block_index % disk_count;
 		int index = block_index / disk_count;
 		
-		dir_block = (struct wfs_dentry *)((char *)regions[disk] + superblock->d_blocks_ptr + (index * BLOCK_SIZE));
+		return (void *)((char *)regions[disk] + superblock->d_blocks_ptr + (index * BLOCK_SIZE));
 	} else if(raid_mode == 1) {
 		// Raid 1 Case
-		dir_block = (struct wfs_dentry *)((char *)metadata + superblock->d_blocks_ptr + (block_index * BLOCK_SIZE));
+		return (void *)((char *)metadata + superblock->d_blocks_ptr + (block_index * BLOCK_SIZE));
 	} else if(raid_mode == 2) {
 		// Raid 1v Case
-		struct wfs_dentry *unique_blocks[disk_count];
-		memset(unique_blocks, 0, disk_count * sizeof(void *));
-		int block_counts[disk_count];
-		memset(block_counts, 0, disk_count * sizeof(int));
-		int max_count_index = 0;
-		struct wfs_dentry *curr_block;
+		int block_votes[MAX_DISK] = {0}; // number of matches each block has
+        void *blocks[MAX_DISK] = {0};
+        int max_votes = 0, majority_index = 0;
 
-		// Walk through all disks
-		// take block at index in every disk, compare them against other disks
-		// Find block with the most occurrences, return that with lowest index
-		for(int i = 0; i < disk_count; i++) {
-			curr_block = (struct wfs_dentry *)((char *)regions[i] + superblock->d_blocks_ptr + (block_index * BLOCK_SIZE));
-			
-			for(int j = 0; j < sizeof(unique_blocks); j++) {
-				if(unique_blocks[j] == 0) {
-					// Never before seen block
-					unique_blocks[i] = curr_block;
-					block_counts[j]++;
-				} else if(memcmp(curr_block, unique_blocks[j], BLOCK_SIZE) == 0) {
-					// Seen before block
-					block_counts[j]++;
-				} else {
-					continue;
-				}
+        for (int i = 0; i < disk_count; i++) {
+            blocks[i] = (char *)regions[i] + superblock->d_blocks_ptr + block_index * BLOCK_SIZE;
+        }
 
-				// Update the most frequently occurring block
-				if(block_counts[j] >= block_counts[max_count_index]) {
-					max_count_index = j > max_count_index ? max_count_index : j;
-				}
-				break;
-			}
-		}
-		dir_block = unique_blocks[max_count_index];
+		// comparing blocks on each disk with blocks on all other disks
+        for (int i = 0; i < disk_count; i++) {
+            for (int j = 0; j < disk_count; j++)
+                if (memcmp(blocks[i], blocks[j], BLOCK_SIZE) == 0) block_votes[i]++; // indentical blocks
+            
+			// update majority block
+            if (block_votes[i] > max_votes || (block_votes[i] == max_votes && i < majority_index)) {
+                max_votes = block_votes[i];
+                majority_index = i;
+            }
+        }
+		// update block with most matches
+        return (void *)blocks[majority_index];
 	}
-	return (void *)dir_block;
+	return NULL;
 }
 
 // No Return
@@ -139,6 +127,11 @@ void free_inode(int index) {
 
 	struct wfs_inode *inode = get_inode(index);
 
+	if (inode == NULL) {
+        perror("no inode with given index");
+        return;
+    }
+
 	// Free all direct blocks
 	for(int i = 0; i <= D_BLOCK; i++) {
 		if(inode->blocks[i] > -1) {
@@ -148,8 +141,7 @@ void free_inode(int index) {
 
 	// Free indirect block and inner blocks
 	if(inode->blocks[IND_BLOCK] > -1) {
-		off_t *ind_block;
-		ind_block = (off_t *)get_block(inode->blocks[IND_BLOCK]);
+		off_t *ind_block = (off_t *)get_block(inode->blocks[IND_BLOCK]);
 		if(ind_block == NULL) return;
 
 		for(int i = 0; i <= BLOCK_SIZE / sizeof(off_t); i++) {
@@ -243,11 +235,12 @@ off_t allocate_inode(mode_t mode) {
 
 // Return -1 if fail
 off_t get_datablock_index_from_inode(int i, off_t *blocks) {
-	if(i >= 0 && i <= D_BLOCK) {
+	if (i < 0) return -1;
+	if(i <= D_BLOCK) {
 		return blocks[i];
 	} else if(i <= D_BLOCK + BLOCK_SIZE / sizeof(off_t)) {
 		if(blocks[IND_BLOCK] == -1) return -1;
-		off_t *block = get_block(blocks[IND_BLOCK]);
+		off_t *block = (off_t *)get_block(blocks[IND_BLOCK]);
 		if(block == NULL) return -1;
 
 		return block[i - (D_BLOCK + 1)];
@@ -267,11 +260,12 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name, of
 	// Search each data block
 	for(int i = 0; i < N_BLOCKS; i++) {
 		if(block_indicies[i] == -1) continue;
+
 		curr_dentry = (struct wfs_dentry *) get_block(block_indicies[i]);
 		if(curr_dentry != NULL) {
 			// Search each dentry in data block
 			for(int j = 0; j < BLOCK_SIZE / sizeof(struct wfs_dentry); j++) {
-				if(strcmp(curr_dentry[j].name, name) == 0) {
+				if(curr_dentry[j].num != 0 && strcmp(curr_dentry[j].name, name) == 0) {
 					*blocknumber = block_indicies[i];
 					*blockptr = (void*) curr_dentry;
 					return &curr_dentry[j];
@@ -624,6 +618,17 @@ static int wfs_rmdir(const char* path) {
 	dentry_to_clear->num = 0;
 	update_all_datablocks(blk_index, blk_ptr);
 
+	// free blocks assosciated with dir
+	for (int i = 0; i < N_BLOCKS; i++) {
+        if (rem_dir->blocks[i] != -1) {
+            free_block(rem_dir->blocks[i]);
+        }
+    }
+
+	// update parent metadata
+	parent->nlinks--;
+    parent->size -= sizeof(struct wfs_dentry);
+
 	// update meta data
 	update_metadata();
 	// free directory inode + all blocks
@@ -715,7 +720,8 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 				return -ENOSPC;
 			}
 			
-			inode->size += BLOCK_SIZE;
+			// file size reflects the written data and isn't just increased by block size
+			inode->size = (offset + written > inode->size) ? offset + written : inode->size;
 			update_metadata();
 		} else if(curr_block_index <= 0) {
 			return -ENOENT;
@@ -840,7 +846,13 @@ int main(int argc, char *argv[]) {
 	superblock = ((struct wfs_sb *)regions[0]);
 	raid_mode = superblock->raid_mode;
 	metadata = malloc(superblock->d_blocks_ptr);
-	metadata = memcpy(metadata, regions[0], superblock->d_blocks_ptr);
+	metadata = memcpy(metadata, regions[0], superblock->d_blocks_ptr);\
+
+	for (int i = 1; i < disk_count; i++)
+        if (memcmp(regions[0], regions[i], superblock->d_blocks_ptr) != 0) {
+            perror("meta data doesn't match across disks\n");
+            exit(-1);
+        }
 
 	int fuse_out = fuse_main(argc, argv, &ops, NULL);
 
