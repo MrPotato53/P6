@@ -1,6 +1,6 @@
 #!/bin/bash
 
-fusermount -u /home/wjh/CS537/P6/playground/mnt
+fusermount -u mnt
 rm -rf mnt
 mkdir mnt
 cd ../solution

@@ -618,13 +618,6 @@ static int wfs_rmdir(const char* path) {
 	dentry_to_clear->num = 0;
 	update_all_datablocks(blk_index, blk_ptr);
 
-	// free blocks assosciated with dir
-	for (int i = 0; i < N_BLOCKS; i++) {
-        if (rem_dir->blocks[i] != -1) {
-            free_block(rem_dir->blocks[i]);
-        }
-    }
-
 	// update parent metadata
 	parent->nlinks--;
     parent->size -= sizeof(struct wfs_dentry);
@@ -846,7 +839,7 @@ int main(int argc, char *argv[]) {
 	superblock = ((struct wfs_sb *)regions[0]);
 	raid_mode = superblock->raid_mode;
 	metadata = malloc(superblock->d_blocks_ptr);
-	metadata = memcpy(metadata, regions[0], superblock->d_blocks_ptr);\
+	metadata = memcpy(metadata, regions[0], superblock->d_blocks_ptr);
 
 	for (int i = 1; i < disk_count; i++)
         if (memcmp(regions[0], regions[i], superblock->d_blocks_ptr) != 0) {
