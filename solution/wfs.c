@@ -261,7 +261,7 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name, of
 	struct wfs_dentry *curr_dentry;
 
 	// Search each data block
-	for(int i = 0; i < N_BLOCKS; i++) {
+	for(int i = 0; i < D_BLOCK; i++) {
 		if(block_indicies[i] == -1) continue;
 
 		curr_dentry = (struct wfs_dentry *) get_block(block_indicies[i]);
@@ -646,7 +646,7 @@ static int wfs_rmdir(const char* path) {
 
 	// make sure directory empty
 	struct wfs_dentry *curr_dentry;
-	for (int i = 0; i < N_BLOCKS; i++) {
+	for (int i = 0; i < D_BLOCK; i++) {
 		if (rem_dir->blocks[i] != -1) {
 			if ((curr_dentry = (struct wfs_dentry*) get_block(rem_dir->blocks[i])) == NULL) return -1;
 			
@@ -758,6 +758,9 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 					for(int i = 0; i < BLOCK_SIZE / sizeof(off_t); i++) {
 						block[i] = -1;
 					}
+
+					update_all_datablocks(inode->blocks[IND_BLOCK], block);
+    				update_metadata();
 				}
 
 				// Insert block pointer into ind block
@@ -812,7 +815,7 @@ static int wfs_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off_
 	}
 
 	struct wfs_dentry *block;
-	for(int i = 0; i < N_BLOCKS; i++) {
+	for(int i = 0; i < D_BLOCK; i++) {
 		if(inode->blocks[i] != -1) {
 			if((block = get_block(inode->blocks[i])) == NULL) {
 				return -ENOENT;
