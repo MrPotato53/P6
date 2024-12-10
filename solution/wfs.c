@@ -697,11 +697,15 @@ static int wfs_read(const char* path, char *buf, size_t size, off_t offset, stru
 		// Retrieve block to read from
 		// get_block handles all raid 1v block selection on a per block basis if disk argument is -1
 		curr_block_index = get_datablock_index_from_inode(curr_position / BLOCK_SIZE, inode->blocks);
+		printf("Reading from %s, block %d\n", path, (int)curr_block_index);
 		if(curr_block_index <= 0) {
 			perror("Inode does not contain this block\n");
 			return -ENOENT;
 		}
-		if((curr_block = get_block(curr_block_index)) == NULL) return -ENOENT;
+		if((curr_block = get_block(curr_block_index)) == NULL) {
+			printf("block to read from DNE\n");
+			 return -ENOENT;
+		}
 
 		// Calcuate size to read
 		to_read = BLOCK_SIZE - (curr_position % BLOCK_SIZE);
@@ -715,6 +719,7 @@ static int wfs_read(const char* path, char *buf, size_t size, off_t offset, stru
 		curr_position += to_read;
 	}
 
+	printf("Total read size from %s: %d\n", path, (int)read);
 	return read;
 }
 
@@ -760,7 +765,7 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 					}
 
 					update_all_datablocks(inode->blocks[IND_BLOCK], block);
-    				update_metadata();
+	    				update_metadata();
 				}
 
 				// Insert block pointer into ind block
@@ -775,23 +780,21 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 				// Index out of bounds
 				return -ENOSPC;
 			}
-			
-			// file size reflects the written data and isn't just increased by block size
-			inode->size = (offset + written > inode->size) ? offset + written : inode->size;
-			update_metadata();
 		}
 
 		// Calculate size to write
 		to_write = BLOCK_SIZE - (curr_position % BLOCK_SIZE);
 		if(size - written < to_write) to_write = size - written;
 		
+		inode->size += to_write;
+		update_metadata();
 
 		// Retrieve corresponding data block in memory
 		if((curr_block = get_block(curr_block_index)) == NULL) {
 			perror("write:get_block failed 1\n");
 			return -ENOENT;
 		}
-
+		printf("Writing to %s to block %d\n", path, (int)curr_block_index);
 		// Perform write Operation
 		memcpy(curr_block + (curr_position % BLOCK_SIZE), buf + written, to_write);
 
@@ -802,6 +805,7 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 		curr_position += to_write;
 	}
 
+	printf("Total write size to %s: %d. Total size: %d\n", path, (int)written, (int)inode->size);
 	return written;
 }
 
