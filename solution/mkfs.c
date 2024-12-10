@@ -72,6 +72,11 @@ int main(int argc, char *argv[]) {
 
         if (total_size > st.st_size) exit(-1);
 
+        void *zeros = calloc(1, total_size);
+        if (lseek(fd, 0, SEEK_SET) < 0 || write(fd, zeros, total_size) < 0) exit(-1);
+        free(zeros);
+
+
         if (lseek(fd, 0, SEEK_SET) < 0 || write(fd, &sb, sizeof(struct wfs_sb)) < 0) exit(-1);
  
         uint8_t *zeroed_i_bitmap = calloc(1, inode_bitmap_size);
