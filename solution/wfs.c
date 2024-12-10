@@ -853,6 +853,7 @@ int main(int argc, char *argv[]) {
 	void *tmp_region[MAX_DISK];
 	struct stat stats;
 	int unique_run_id = -1;
+	int present[MAX_DISK] = {0};
 	
 	// Count disks
 	for(int i = 1; i < argc; i++) {
@@ -878,7 +879,7 @@ int main(int argc, char *argv[]) {
 		}
 
 		tmp_region[i] = mmap(NULL, stats.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd[i], 0);
-		if(tmp_region[i] == 0) {
+		if(tmp_region[i] == MAP_FAILED) {
 			perror("mmap failed\n");
 			exit(-1);
 		}
@@ -894,6 +895,8 @@ int main(int argc, char *argv[]) {
 			perror("disks are not from same run of mkfs\n");
 			exit(1);
 		}
+
+		present[((struct wfs_sb *)tmp_region[i])->mount_index] = 1;
 	}
 
 	// Update argc and remove disk arguments in argv
@@ -903,6 +906,14 @@ int main(int argc, char *argv[]) {
 
 	superblock = ((struct wfs_sb *)regions[0]);
 	raid_mode = superblock->raid_mode;
+
+	// Make sure all disks are accounted for
+	for(int i = 0; i < superblock->disk_cnt; i++) {
+		if(present[i] != 1) exit(1);
+	}
+
+	disk_count = superblock->disk_cnt;
+
 	metadata = malloc(superblock->d_blocks_ptr);
 	if(!metadata) {
 		return -ENOMEM;

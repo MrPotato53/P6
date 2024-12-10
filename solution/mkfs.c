@@ -60,8 +60,7 @@ int main(int argc, char *argv[]) {
     off_t total_size = myround(sb.d_blocks_ptr + sb.num_data_blocks * BLOCK_SIZE, BLOCK_SIZE);
 
     sb.timestamp = (int) time(NULL);
-
-    for (int i = 0; i < disk_cnt; i++) strcpy(sb.disks[i], disks[i]);
+    sb.disk_cnt = disk_cnt;
 
     for (int i = 0; i < disk_cnt; i++) {
         int fd;

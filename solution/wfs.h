@@ -35,9 +35,9 @@ struct wfs_sb {
     // Extend after this line
 
     int raid_mode;
-    char disks[MAX_DISK][MAX_NAME];
     int mount_index;
     int timestamp;
+    int disk_cnt;
 };
 
 // Inode
