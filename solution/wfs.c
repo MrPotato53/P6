@@ -24,6 +24,7 @@ void *metadata;
 void update_metadata() {
 	// Keep metadata consistent across all disks
 	for(int i = 0; i < disk_count; i++) {
+		((struct wfs_sb *)metadata)->mount_index = i;
 		// Write inode bitmap into memory
 		memcpy((char *)regions[i] + superblock->i_bitmap_ptr, (char *)metadata + superblock->i_bitmap_ptr, superblock->d_bitmap_ptr - superblock->i_bitmap_ptr);
 		if(raid_mode >= 1) {
@@ -228,6 +229,7 @@ off_t allocate_inode(mode_t mode) {
 	inode->atim = t;
 	inode->mtim = t;
 	update_metadata();
+	printf("Inode number %d allocated\n", (int)blk);
 	return blk;
 }
 
@@ -909,6 +911,7 @@ int main(int argc, char *argv[]) {
 
 	// Make sure all disks are accounted for
 	for(int i = 0; i < superblock->disk_cnt; i++) {
+		printf("Disk index: %d\n", ((struct wfs_sb*)regions[i])->mount_index);
 		if(present[i] != 1) exit(1);
 	}
 
