@@ -487,7 +487,7 @@ static int wfs_mknod(const char* path, mode_t mode, dev_t rdev) {
 	if (blk < 0) {
 		free(path_copy1);
 		free(path_copy2);
-		return -ENOENT;
+		return -ENOSPC;
 	}
 
 	free(path_copy1);
@@ -549,7 +549,7 @@ static int wfs_mkdir(const char* path, mode_t mode) {
 	if (blk < 0) {
 		free(path_copy1);
 		free(path_copy2);
-		return -ENOENT;
+		return -ENOSPC;
 	}
 
 	free(path_copy1);
@@ -726,8 +726,6 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 		return -ENOENT;
 	}
 
-	printf("Writing %d to %s\n", (int)size, path);
-
 	size_t written = 0;
 	size_t to_write;
 	size_t curr_position = offset;
@@ -737,12 +735,9 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 	while(written < size) {
 		// Find index in data block array of inode
 		curr_block_index = get_datablock_index_from_inode(curr_position / BLOCK_SIZE, inode->blocks);
-		
-		printf("Writing to block %d\n", (int)curr_position / BLOCK_SIZE);
 
 		// Make sure there is an existing entry, alloc if not
 		if(curr_block_index == -1) {
-			printf("Block DNE, allocating\n");
 			if((curr_block_index = allocate_block()) < 0) {
 				perror("write:Allocate block failed\n");
 				return -ENOSPC;
@@ -753,11 +748,9 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 				inode->blocks[curr_position / BLOCK_SIZE] = curr_block_index;
 			} else if(curr_position / BLOCK_SIZE <= D_BLOCK + BLOCK_SIZE / sizeof(off_t)) {
 				// If index is in the IND block
-				printf("Indirect block\n");
-
+				
 				// Create new ind block if needed
 				if(inode->blocks[IND_BLOCK] == -1) {
-					printf("Allocating Indirect block\n");
 					off_t ind_block;
 					if((ind_block = allocate_block()) < 0) return -ENOSPC;
 					off_t *block = get_block(ind_block);
@@ -767,7 +760,6 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 					}
 				}
 
-				printf("Inserting block index %d into ind block\n", curr_block_index);
 				// Insert block pointer into ind block
 				off_t *block = get_block(inode->blocks[IND_BLOCK]);
 				if(block == NULL) {
