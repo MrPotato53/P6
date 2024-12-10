@@ -144,7 +144,7 @@ void free_inode(int index) {
 		off_t *ind_block = (off_t *)get_block(inode->blocks[IND_BLOCK]);
 		if(ind_block == NULL) return;
 
-		for(int i = 0; i <= BLOCK_SIZE / sizeof(off_t); i++) {
+		for(int i = 0; i < BLOCK_SIZE / sizeof(off_t); i++) {
 			if(ind_block[i] > -1) {
 				free_block(ind_block[i]);
 			}
