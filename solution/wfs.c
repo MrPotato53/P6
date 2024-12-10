@@ -255,6 +255,8 @@ struct wfs_dentry *find_dentry(struct wfs_inode *dir_inode, const char *name, of
 		return NULL;
 	}
 
+	printf("Searching for %s\n", name);
+
 	off_t *block_indicies = dir_inode->blocks;
 	struct wfs_dentry *curr_dentry;
 
@@ -720,8 +722,11 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 	(void)fi;
 	struct wfs_inode *inode;
 	if((inode = get_inode_from_path(path)) == NULL) {
+		perror("write:file from path DNE\n");
 		return -ENOENT;
 	}
+
+	printf("Writing %d to %s\n", (int)size, path);
 
 	size_t written = 0;
 	size_t to_write;
@@ -732,28 +737,43 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 	while(written < size) {
 		// Find index in data block array of inode
 		curr_block_index = get_datablock_index_from_inode(curr_position / BLOCK_SIZE, inode->blocks);
+		
+		printf("Writing to block %d\n", (int)curr_position / BLOCK_SIZE);
 
 		// Make sure there is an existing entry, alloc if not
 		if(curr_block_index == -1) {
-			if((curr_block_index = allocate_block()) <= 0) return -ENOSPC;
-
+			printf("Block DNE, allocating\n");
+			if((curr_block_index = allocate_block()) < 0) {
+				perror("write:Allocate block failed\n");
+				return -ENOSPC;
+			}
 
 			if(curr_position / BLOCK_SIZE >= 0 && curr_position / BLOCK_SIZE <= D_BLOCK) {
 				// If index is one of the D blocks
 				inode->blocks[curr_position / BLOCK_SIZE] = curr_block_index;
 			} else if(curr_position / BLOCK_SIZE <= D_BLOCK + BLOCK_SIZE / sizeof(off_t)) {
 				// If index is in the IND block
+				printf("Indirect block\n");
 
 				// Create new ind block if needed
 				if(inode->blocks[IND_BLOCK] == -1) {
+					printf("Allocating Indirect block\n");
 					off_t ind_block;
-					if((ind_block = allocate_block()) <= 0) return -ENOSPC;
+					if((ind_block = allocate_block()) < 0) return -ENOSPC;
+					off_t *block = get_block(ind_block);
 					inode->blocks[IND_BLOCK] = ind_block;
+					for(int i = 0; i < BLOCK_SIZE / sizeof(off_t); i++) {
+						block[i] = -1;
+					}
 				}
 
+				printf("Inserting block index %d into ind block\n", curr_block_index);
 				// Insert block pointer into ind block
 				off_t *block = get_block(inode->blocks[IND_BLOCK]);
-				if(block == NULL) return -ENOENT;
+				if(block == NULL) {
+					perror("write:getblock failed\n");
+					return -ENOENT;
+				}
 				block[(curr_position / BLOCK_SIZE) - (D_BLOCK + 1)] = curr_block_index;
 				update_all_datablocks(inode->blocks[IND_BLOCK], block);
 			} else {
@@ -764,8 +784,6 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 			// file size reflects the written data and isn't just increased by block size
 			inode->size = (offset + written > inode->size) ? offset + written : inode->size;
 			update_metadata();
-		} else if(curr_block_index <= 0) {
-			return -ENOENT;
 		}
 
 		// Calculate size to write
@@ -774,7 +792,10 @@ static int wfs_write(const char* path, const char *buf, size_t size, off_t offse
 		
 
 		// Retrieve corresponding data block in memory
-		if((curr_block = get_block(curr_block_index)) == NULL) return -ENOENT;
+		if((curr_block = get_block(curr_block_index)) == NULL) {
+			perror("write:get_block failed 1\n");
+			return -ENOENT;
+		}
 
 		// Perform write Operation
 		memcpy(curr_block + (curr_position % BLOCK_SIZE), buf + written, to_write);
